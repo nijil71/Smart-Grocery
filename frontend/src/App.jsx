@@ -4,17 +4,38 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
-import { PlusCircle, ShoppingCart, AlertTriangle, ChefHat, Trash2 } from 'lucide-react';
-
+import { PlusCircle, ShoppingCart, ChefHat, Trash2,User } from 'lucide-react';
+import PhoneInputWithCountryCode from './components/PhoneInput';
+import LogoutDialog from './components/LogoutDialog';
+import LoadingAnimation from './components/LoadingAnimation';
 const API_URL = 'http://localhost:5000';
 function LoginSignup({ onLogin }) {
   const [isLogin, setIsLogin] = useState(true);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
 
+
+  const validateForm = () => {
+    if (username.length < 3) {
+      setError('Username must be at least 3 characters long');
+      return false;
+    }
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters long');
+      return false;
+    }
+
+    return true;
+  };
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setError('');
+    if (!validateForm()) {
+      return;
+    }
     const endpoint = isLogin ? '/login' : '/register';
     const body = isLogin
       ? { username, password }
@@ -30,123 +51,194 @@ function LoginSignup({ onLogin }) {
       if (response.ok) {
         if (isLogin) {
           localStorage.setItem('token', data.access_token);
-          onLogin();
+          localStorage.setItem('username', data.username);
+          onLogin(data.username);
+        
         } else {
           setIsLogin(true);
-          alert('Registration successful. Please log in.');
+          setSuccess('Account created successfully, please login!');
         }
       } else {
-        alert(data.message);
+        setError(data.message);
       }
     } catch (error) {
       console.error('Error:', error);
     }
+    
   };
 
   return (
-    <Card>
-      <CardHeader>{isLogin ? 'Login' : 'Sign Up'}</CardHeader>
-      <CardContent className="grid gap-2">
-        <form onSubmit={handleSubmit}>
-          <Input
-            type="text"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            placeholder="Username"
-            className="mb-2"
-          />
-          <Input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Password"
-            className="mb-2"
-          />
-          {!isLogin && (
-            <Input
-              type="tel"
-              value={phoneNumber}
-              onChange={(e) => setPhoneNumber(e.target.value)}
-              placeholder="Phone Number"
-              className="mb-2"
-            />
+<div className="min-h-screen flex flex-col justify-center items-center">
+  <Card className="w-full max-w-lg p-8">
+    <CardHeader className="text-center mb-4 font-bold text-2xl">
+      <span className="bg-clip-text text-transparent bg-gradient-to-r from-primary to-secondary">
+        {isLogin ? 'Login' : 'Sign Up'}
+      </span>
+    </CardHeader>
+    <CardContent className="grid gap-2">
+    {success && (
+  <React.Fragment>
+    <Alert variant="destructive" className="mb-4 border border-green-500 text-green-500">
+      <AlertDescription>{success}</AlertDescription>
+    </Alert>
+  </React.Fragment>
+)}
+    {error && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
           )}
-          <Button type="submit">{isLogin ? 'Login' : 'Sign Up'}</Button>
-        </form>
-        <Button onClick={() => setIsLogin(!isLogin)} className="mt-2">
-          {isLogin ? 'Need an account? Sign Up' : 'Have an account? Log In'}
+      <form onSubmit={handleSubmit} className="grid gap-2 p-2">
+        <Input
+          type="text"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          placeholder="Username"
+          className="mb-4 rounded-md border border-input bg-transparent px-3 py-1.5 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          required
+        />
+        <Input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="Password"
+          className="mb-4"
+          required
+        />
+        {!isLogin && (
+          <PhoneInputWithCountryCode/>
+
+        )}
+        <Button type="submit" className="w-full">
+          {isLogin ? 'Login' : 'Sign Up'}
         </Button>
-      </CardContent>
-    </Card>
+      </form>
+      <Button onClick={() => setIsLogin(!isLogin)} className="w-full mt-2">
+        {isLogin ? 'Need an account? Sign Up' : 'Have an account? Log In'}
+      </Button>
+    </CardContent>
+  </Card>
+</div>
+
   );
 }
 
 export default function SmartGroceryList() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [groceryList, setGroceryList] = useState([]);
+  const [username, setUsername] = useState('');
   const [newItem, setNewItem] = useState('');
   const [shelfLife, setShelfLife] = useState('');
   const [expiringItems, setExpiringItems] = useState([]);
   const [recipes, setRecipes] = useState([]);
   const [shoppingHistory, setShoppingHistory] = useState([]);
-  const isTokenExpired = (token) => {
-    if (!token) return true;
-    const decoded = JSON.parse(atob(token.split('.')[1]));
-    const currentTime = Math.floor(Date.now() / 1000);
-    return decoded.exp < currentTime;
-  };
-  
+  const [isOpen, setIsOpen] = useState(false);
+
+
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (token && !isTokenExpired(token)) {
-      setIsLoggedIn(true);
-      fetchGroceryList();
-      fetchExpiringItems();
-      fetchShoppingHistory();
-    } else {
-      setIsLoggedIn(false);
-      localStorage.removeItem('token');
-    }
+    const checkAuthStatus = async () => {
+      const token = localStorage.getItem('token');
+      if (token) {
+        try {
+          const response = await fetch(`${API_URL}/check_auth`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (response.ok) {
+            const data = await response.json();
+            setIsLoggedIn(true);
+            setUsername(data.username);
+            await fetchUserData();
+          } else {
+            throw new Error('Authentication failed');
+          }
+        } catch (error) {
+          console.error('Auth check failed:', error);
+          logout();
+        }
+      }
+      setIsLoading(false);
+    };
+
+    checkAuthStatus();
   }, []);
-  
+
+  const fetchUserData = async () => {
+    await Promise.all([
+      fetchGroceryList(),
+      fetchExpiringItems(),
+      fetchShoppingHistory()
+    ]);
+  };
 
   const fetchGroceryList = async () => {
-    const response = await fetch(`${API_URL}/get_list/1`, {
-      headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-    });    
-    const data = await response.json();
-    setGroceryList(data);
+    try {
+      const response = await fetch(`${API_URL}/get_list`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setGroceryList(data);
+      } else {
+        throw new Error('Failed to fetch grocery list');
+      }
+    } catch (error) {
+      console.error('Error fetching grocery list:', error);
+    }
   };
 
   const fetchExpiringItems = async () => {
-    const response = await fetch(`${API_URL}/get_expiring_soon/1`, {
-      headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-    });    const data = await response.json();
-    setExpiringItems(data);
+    try {
+      const response = await fetch(`${API_URL}/get_expiring_soon`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setExpiringItems(data);
+      } else {
+        throw new Error('Failed to fetch expiring items');
+      }
+    } catch (error) {
+      console.error('Error fetching expiring items:', error);
+    }
   };
 
   const fetchShoppingHistory = async () => {
-    const response = await fetch(`${API_URL}/get_shopping_history/1`, {
-      headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-    });    const data = await response.json();
-    setShoppingHistory(data);
+    try {
+      const response = await fetch(`${API_URL}/get_shopping_history`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setShoppingHistory(data);
+      } else {
+        throw new Error('Failed to fetch shopping history');
+      }
+    } catch (error) {
+      console.error('Error fetching shopping history:', error);
+    }
   };
   const addItem = async () => {
     if (!newItem || !shelfLife) return;
-    await fetch(`${API_URL}/add_item`, {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('token')}`
-      },
-      body: JSON.stringify({ name: newItem, shelf_life: parseInt(shelfLife), user_id: 1 }),
-    });
-    setNewItem('');
-    setShelfLife('');
-    fetchGroceryList();
-    fetchExpiringItems();
-    fetchShoppingHistory();
-
+    try {
+      const response = await fetch(`${API_URL}/add_item`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ name: newItem, shelf_life: parseInt(shelfLife) }),
+      });
+      if (response.ok) {
+        setNewItem('');
+        setShelfLife('');
+        await fetchUserData();
+      } else {
+        throw new Error('Failed to add item');
+      }
+    } catch (error) {
+      console.error('Error adding item:', error);
+    }
   };
 
   const deleteItem = async (itemId) => {
@@ -167,13 +259,43 @@ export default function SmartGroceryList() {
     const data = await response.json();
     setRecipes(data.slice(0, 3));
   };
+  const logout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('username');
+    setIsLoggedIn(false);
+    setUsername('');
+    setGroceryList([]);
+    setExpiringItems([]);
+    setShoppingHistory([]);
+    setIsOpen(false); // Close dialog after logging out
+
+  };
+  const handleLogin = (loggedInUsername) => {
+    setIsLoggedIn(true);
+    setUsername(loggedInUsername);
+    fetchUserData();
+  };
+
+  if (isLoading) {
+    return <div><LoadingAnimation /></div>;
+  }
+
   if (!isLoggedIn) {
-    return <LoginSignup onLogin={() => setIsLoggedIn(true)} />;
+    return <LoginSignup onLogin={handleLogin} />;
   }
   return (
     <div className="min-h-screen bg-gray-100 py-8">
       <div className="max-w-4xl mx-auto px-4">
-        <h1 className="text-4xl font-bold text-center mb-8 text-gray-800">Smart Grocery List</h1>
+      <div className="flex justify-between items-center mb-8">
+          <h1 className="text-4xl font-bold text-gray-800">Smart Grocery List</h1>
+          <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-2">
+              <User className="w-7 h-7" />
+              <span className="text-lg font-semibold">Welcome, {username}!</span>
+            </div>
+            <LogoutDialog logout={logout} />
+          </div>
+        </div>
         
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <Card className="shadow-md">
@@ -188,12 +310,14 @@ export default function SmartGroceryList() {
                   value={newItem}
                   onChange={(e) => setNewItem(e.target.value)}
                   placeholder="Item name"
+                  required
                 />
                 <Input
                   type="number"
                   value={shelfLife}
                   onChange={(e) => setShelfLife(e.target.value)}
                   placeholder="Shelf life (days)"
+                  required
                 />
                 <Button onClick={addItem} className="w-full">Add Item</Button>
               </div>

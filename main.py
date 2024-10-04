@@ -8,7 +8,7 @@ import os
 from dotenv import load_dotenv
 from twilio.rest import Client
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask_jwt_extended import JWTManager, jwt_required, create_access_token, get_jwt_identity
+from flask_jwt_extended import JWTManager, jwt_required, create_access_token, get_jwt_identity,get_jwt
 from apscheduler.schedulers.background import BackgroundScheduler
 
 load_dotenv()
@@ -71,9 +71,11 @@ def send_expiry_notifications():
 scheduler = BackgroundScheduler()
 scheduler.add_job(func=send_expiry_notifications, trigger="interval", hours=24)
 scheduler.start()
+
 @app.route('/register', methods=['POST'])
 def register():
     data = request.json
+    print(data)
     if User.query.filter_by(username=data['username']).first():
         return jsonify({"message": "Username already exists"}), 400
     user = User(
@@ -90,26 +92,40 @@ def login():
     data = request.json
     user = User.query.filter_by(username=data['username']).first()
     if user and check_password_hash(user.password_hash, data['password']):
-        # Set token expiration time (e.g., 15 minutes)
-        access_token = create_access_token(identity=user.id, expires_delta=timedelta(minutes=15))
-        return jsonify(access_token=access_token), 200
+        access_token = create_access_token(
+            identity=user.id,
+            additional_claims={"username": user.username},
+            expires_delta=timedelta(hours=1)
+        )
+        return jsonify(access_token=access_token, username=user.username), 200
     return jsonify({"message": "Invalid username or password"}), 401
+
+@app.route('/check_auth', methods=['GET'])
+@jwt_required()
+def check_auth():
+    current_user_id = get_jwt_identity()
+    claims = get_jwt()
+    username = claims.get("username", None)
+    return jsonify({"authenticated": True, "user_id": current_user_id, "username": username}), 200
 
 @app.route('/add_item', methods=['POST'])
 @jwt_required()
 def add_item():
     data = request.json
+    current_user_id = get_jwt_identity()  # Get the user ID from the JWT token
+    print(f"Adding item for user_id: {current_user_id}")  # Debugging user_id
+
     new_item = GroceryItem(
         name=data['name'],
         purchase_date=datetime.now(),
         expiry_date=datetime.now() + timedelta(days=data['shelf_life']),
-        user_id=data['user_id']
+        user_id=current_user_id  # Associate the item with the current logged-in user
     )
     db.session.add(new_item)
 
     # Add to shopping history
     history_item = ShoppingHistory(
-        user_id=data['user_id'],
+        user_id=current_user_id,  # Ensure the correct user ID is used
         item_name=data['name'],
         purchase_date=datetime.now()
     )
@@ -117,6 +133,7 @@ def add_item():
 
     db.session.commit()
     return jsonify({"message": "Item added successfully"}), 201
+
 
 @app.route('/delete_item/<int:item_id>', methods=['DELETE'])
 @jwt_required()
@@ -128,10 +145,11 @@ def delete_item(item_id):
         return jsonify({"message": "Item deleted successfully"}), 200
     return jsonify({"message": "Item not found"}), 404
 
-@app.route('/get_list/<int:user_id>', methods=['GET'])
+@app.route('/get_list', methods=['GET'])
 @jwt_required()
-def get_list(user_id):
-    items = GroceryItem.query.filter_by(user_id=user_id).all()
+def get_list():
+    current_user_id = get_jwt_identity()
+    items = GroceryItem.query.filter_by(user_id=current_user_id).all()
     return jsonify([{
         "id": item.id,
         "name": item.name,
@@ -139,9 +157,11 @@ def get_list(user_id):
         "expiry_date": item.expiry_date.isoformat()
     } for item in items])
 
-@app.route('/get_expiring_soon/<int:user_id>', methods=['GET'])
+@app.route('/get_expiring_soon', methods=['GET'])
 @jwt_required()
-def get_expiring_soon(user_id):
+def get_expiring_soon():
+    user_id = get_jwt_identity()
+
     soon = datetime.now() + timedelta(days=2)
     items = GroceryItem.query.filter(
         GroceryItem.user_id == user_id,
@@ -153,9 +173,10 @@ def get_expiring_soon(user_id):
         "expiry_date": item.expiry_date.isoformat()
     } for item in items])
 
-@app.route('/get_shopping_history/<int:user_id>', methods=['GET'])
+@app.route('/get_shopping_history', methods=['GET'])
 @jwt_required()
-def get_shopping_history(user_id):
+def get_shopping_history():
+    user_id = get_jwt_identity()
     history = ShoppingHistory.query.filter_by(user_id=user_id).order_by(ShoppingHistory.purchase_date.desc()).all()
     return jsonify([{
         "id": item.id,
